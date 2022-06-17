@@ -177,6 +177,18 @@ impl Contract {
         }
     }
 
+    pub fn retired_domain(&mut self, id: i128) -> DomainPurchased {      
+        //self.administrators.iter().find(|&x| x == &env::signer_account_id()).expect("NearBase: Only administrators can publish domains");
+        let index = self.domains_purchased.iter().position(|x| x.id == id).expect("Domain no exists");
+        
+        if self.domains_purchased[index].owner_id == env::signer_account_id() {
+            self.domains_purchased[index].retired = true;
+            self.domains_purchased[index].clone()
+        } else {
+            env::panic(b"NearBase: No permission")
+        }
+    }
+
     pub fn get_domains_published(
         self,
         user_seller: Option<AccountId>,
@@ -237,6 +249,36 @@ impl Contract {
             purchase_price: r.purchase_price,
             retired: r.retired,
         }).collect()
+    }
+
+    pub fn get_last_sold(&self,
+        number_domains: i128,
+    ) -> Vec<DomainPurchased> {
+
+        if self.domains_purchased.len() as i128 > number_domains {
+            let index: i128 = self.domains_purchased.len() as i128 - number_domains;
+            let result: Vec<DomainPurchased> = self.domains_purchased.clone();
+
+            result.iter()
+            .skip(index as usize)
+            .map(|x| DomainPurchased {
+                id: x.id,
+                domain: x.domain.clone(),
+                user_seller: x.user_seller.clone(),
+                owner_id: x.owner_id.clone(),
+                purchase_price: x.purchase_price,
+                retired: x.retired,
+            }).collect()
+        } else {
+            self.domains_purchased.iter().map(|x| DomainPurchased {
+                id: x.id,
+                domain: x.domain.clone(),
+                user_seller: x.user_seller.clone(),
+                owner_id: x.owner_id.clone(),
+                purchase_price: x.purchase_price,
+                retired: x.retired,
+            }).collect()
+        }  
     }
 
     pub fn get_domain_id(
