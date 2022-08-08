@@ -35,6 +35,7 @@ pub struct DomainPublished {
     date_day: String
 }
 
+
 #[derive(Serialize, Deserialize, BorshDeserialize, BorshSerialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 pub struct DomainPurchased {
@@ -248,6 +249,25 @@ impl Contract {
             owner_id: r.owner_id.clone(),
             purchase_price: r.purchase_price,
             retired: r.retired,
+        }).collect()
+    }
+
+    pub fn get_top_purchased(&self, top: Option<i32>) -> Vec<DomainPurchased> {
+        let top_limit = top.unwrap_or(5);
+
+        let mut top_domains: Vec<DomainPurchased> = self.domains_purchased.clone();
+
+        top_domains.sort_by(|a, b| b.purchase_price.partial_cmp(&a.purchase_price).unwrap());
+        
+        top_domains.iter()
+        .take(top_limit as usize)
+        .map(|x| DomainPurchased {
+            id: x.id,
+            domain: x.domain.to_string(),
+            user_seller: x.user_seller.to_string(),
+            owner_id: x.owner_id.to_string(),
+            purchase_price: x.purchase_price,
+            retired: x.retired,
         }).collect()
     }
 
