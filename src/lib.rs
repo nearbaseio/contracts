@@ -28,11 +28,9 @@ pub struct DomainPublished {
     domain: AccountId,
     user_seller: AccountId,
     price: Balance,
+    post_type: i8,
     is_active: bool, 
-    date_fech: String,
-    date_year: String,
-    date_month: String,
-    date_day: String
+    date_time: u64,
 }
 
 
@@ -45,6 +43,8 @@ pub struct DomainPurchased {
     owner_id: AccountId,
     purchase_price: Balance,
     retired: bool,
+    post_type: i8,
+    date_time: u64,
 }
 
 #[near_bindgen]
@@ -90,7 +90,7 @@ impl Contract {
         self.administrators.remove(index);
     }
 
-    pub fn publish_domain(&mut self, domain: AccountId, user_seller: AccountId, price: U128, date_fech: String, date_year: String, date_month: String, date_day: String) -> DomainPublished {      
+    pub fn publish_domain(&mut self, domain: AccountId, user_seller: AccountId, price: U128) -> DomainPublished {      
         self.administrators.iter().find(|&x| x == &env::signer_account_id()).expect("NearBase: Only administrators can publish domains");
 
         self.id_domain += 1;
@@ -100,11 +100,9 @@ impl Contract {
             domain: domain.to_string(),
             user_seller: user_seller.to_string(),
             price: price.0,
+            post_type: 1,
             is_active: true,
-            date_fech: date_fech,
-            date_year: date_year,
-            date_month: date_month,
-            date_day: date_day
+            date_time: env::block_timestamp(),
         };
 
         self.domains_published.insert(&self.id_domain, &data);
@@ -112,8 +110,74 @@ impl Contract {
         data
     }
 
-    pub fn update_domain(&mut self, id: i128, price: U128, is_active: bool) -> DomainPublished {      
-        //self.administrators.iter().find(|&x| x == &env::signer_account_id()).expect("NearBase: Only administrators can publish domains");
+    #[payable]
+    pub fn resell_domain(
+        &mut self, 
+        id: i128,
+        price: U128,
+        post_type: i8,
+    ) -> DomainPublished {  
+        let initial_storage_usage = env::storage_usage();  
+        let domain = self.domains_purchased.iter().find(|&x| x.id == id).expect("NearBase: Domain does not exist");
+
+        if domain.owner_id == env::signer_account_id() && domain.retired == false {
+            if post_type == 1 {
+                let data = DomainPublished {
+                    id: domain.id,
+                    domain: domain.domain.clone(),
+                    user_seller: domain.owner_id.clone(),
+                    price: price.0,
+                    post_type: post_type,
+                    is_active: true,
+                    date_time: env::block_timestamp(),
+                };
+        
+                self.domains_published.insert(&domain.id, &data);
+
+                let index = self.domains_purchased.iter().position(|x| x.id == id).expect("Not domain");
+                self.domains_purchased.remove(index);
+                env::log(b"NearBase: Published domain");
+                data
+            } else if post_type == 2 {
+                let deposit_premium: Balance = 1000000000000000000000000;
+                let attached_deposit = env::attached_deposit();
+
+                assert!(
+                    attached_deposit >= deposit_premium,
+                    "NearBase: attached deposit is less than deposit_premium : {}",
+                    deposit_premium
+                );
+
+                Promise::new(self.vault_id.clone()).transfer(deposit_premium);
+                refund_deposit(env::storage_usage() - initial_storage_usage, deposit_premium);
+
+                let data = DomainPublished {
+                    id: domain.id,
+                    domain: domain.domain.clone(),
+                    user_seller: domain.owner_id.clone(),
+                    price: price.0,
+                    post_type: post_type,
+                    is_active: true,
+                    date_time: env::block_timestamp(),
+                };
+        
+                self.domains_published.insert(&domain.id, &data);
+
+                let index = self.domains_purchased.iter().position(|x| x.id == id).expect("Not domain");
+                self.domains_purchased.remove(index);
+                env::log(b"NearBase: Published domain");
+                data
+            } else {
+                env::panic(b"NearBase: Post type not allowed")
+            }
+        } else {
+            env::panic(b"NearBase: No permission")
+        }
+    }
+
+    #[payable]
+    pub fn update_domain(&mut self, id: i128, price: U128, is_active: bool, post_type: i8) -> DomainPublished {      
+        let initial_storage_usage = env::storage_usage();
         let domain = self.domains_published.get(&id).expect("NearBase: Domain does not exist");
         
         if domain.user_seller == env::signer_account_id() {
@@ -123,15 +187,34 @@ impl Contract {
                 user_seller: domain.user_seller,
                 price: price.0,
                 is_active: is_active,
-                date_fech: domain.date_fech,
-                date_year: domain.date_year,
-                date_month: domain.date_month,
-                date_day: domain.date_day
+                post_type: post_type,
+                date_time: domain.date_time,
             };
-    
-            self.domains_published.insert(&domain.id, &data);
-            env::log(b"NearBase: Update domain");
-            data
+
+            if domain.post_type == 2 || post_type == 1{
+                self.domains_published.insert(&domain.id, &data);
+                env::log(b"NearBase: Update domain");
+                data
+            } else if domain.post_type == 1 && post_type == 2{
+                let deposit_premium: Balance = 1000000000000000000000000;
+                let attached_deposit = env::attached_deposit();
+
+                assert!(
+                    attached_deposit >= deposit_premium,
+                    "NearBase: attached deposit is less thans deposit_premium : {}",
+                    deposit_premium
+                );
+
+                Promise::new(self.vault_id.clone()).transfer(deposit_premium);
+                refund_deposit(env::storage_usage() - initial_storage_usage, deposit_premium);
+
+                self.domains_published.insert(&domain.id, &data);
+                env::log(b"NearBase: Update domain");
+                data
+
+            } else {
+                env::panic(b"NearBase: Post type not allowed")
+            }
         } else {
             env::panic(b"NearBase: No permission")
         }
@@ -169,7 +252,9 @@ impl Contract {
                 user_seller: domain.user_seller.clone(),
                 owner_id: env::signer_account_id().to_string(),
                 purchase_price: domain.price.clone(),
+                post_type: domain.post_type,
                 retired: false,
+                date_time: env::block_timestamp()
             };
             self.domains_purchased.push(data);
             self.domains_published.remove(&id);        
@@ -190,6 +275,18 @@ impl Contract {
         }
     }
 
+    pub fn cancel_domain(&mut self, id: i128) {      
+        //self.administrators.iter().find(|&x| x == &env::signer_account_id()).expect("NearBase: Only administrators can publish domains");
+        let domain = self.domains_published.get(&id).expect("NearBase: Domain does not exist");
+        
+        if domain.user_seller == env::signer_account_id() {
+            self.domains_published.remove(&domain.id);  
+            env::log(b"removed domain"); 
+        } else {
+            env::panic(b"NearBase: No permission")
+        }
+    }
+
     pub fn get_domains_published(
         self,
         user_seller: Option<AccountId>,
@@ -201,10 +298,8 @@ impl Contract {
                 user_seller: x.user_seller.to_string(),
                 price: x.price,
                 is_active: x.is_active, 
-                date_fech: x.date_fech,
-                date_year: x.date_year,
-                date_month: x.date_month,
-                date_day: x.date_day
+                post_type: x.post_type,
+                date_time: x.date_time,
             }).collect()
         } else {
             env::panic(b"NearBase: Not user");
@@ -226,7 +321,9 @@ impl Contract {
                             user_seller: r.user_seller.clone(),
                             owner_id: r.owner_id.clone(),
                             purchase_price: r.purchase_price,
+                            post_type: r.post_type,
                             retired: r.retired,
+                            date_time: r.date_time,
                         }).collect();
         }
 
@@ -238,7 +335,9 @@ impl Contract {
                             user_seller: r.user_seller.clone(),
                             owner_id: r.owner_id.clone(),
                             purchase_price: r.purchase_price,
+                            post_type: r.post_type,
                             retired: r.retired,
+                            date_time: r.date_time,
                         }).collect();
         }
 
@@ -248,7 +347,9 @@ impl Contract {
             user_seller: r.user_seller.clone(),
             owner_id: r.owner_id.clone(),
             purchase_price: r.purchase_price,
+            post_type: r.post_type,
             retired: r.retired,
+            date_time: r.date_time,
         }).collect()
     }
 
@@ -267,7 +368,9 @@ impl Contract {
             user_seller: x.user_seller.to_string(),
             owner_id: x.owner_id.to_string(),
             purchase_price: x.purchase_price,
+            post_type: x.post_type,
             retired: x.retired,
+            date_time: x.date_time,
         }).collect()
     }
 
@@ -287,7 +390,9 @@ impl Contract {
                 user_seller: x.user_seller.clone(),
                 owner_id: x.owner_id.clone(),
                 purchase_price: x.purchase_price,
+                post_type: x.post_type,
                 retired: x.retired,
+                date_time: x.date_time,
             }).collect()
         } else {
             self.domains_purchased.iter().map(|x| DomainPurchased {
@@ -296,7 +401,9 @@ impl Contract {
                 user_seller: x.user_seller.clone(),
                 owner_id: x.owner_id.clone(),
                 purchase_price: x.purchase_price,
+                post_type: x.post_type,
                 retired: x.retired,
+                date_time: x.date_time,
             }).collect()
         }  
     }
@@ -312,24 +419,43 @@ impl Contract {
             user_seller: x.user_seller.to_string(),
             owner_id: x.owner_id.to_string(),
             purchase_price: x.purchase_price,
+            post_type: x.post_type,
             retired: x.retired,
+            date_time: x.date_time,
+        }).collect()
+    }
+
+    pub fn get_domain_forsale(
+        self,
+        id: i128,
+    ) -> Vec<DomainPublished> {
+        self.domains_published.iter().filter(|(_k, x)| x.id == id).map(|(_k, x)| DomainPublished {
+            id: x.id,
+            domain: x.domain.to_string(),
+            user_seller: x.user_seller.to_string(),
+            price: x.price,
+            post_type: x.post_type,
+            is_active: x.is_active, 
+            date_time: x.date_time,
         }).collect()
     }
 
     pub fn get_market(&self,
     ) -> Vec<DomainPublished> {
 
-        self.domains_published.iter().filter(|(_k, x)| x.is_active == true).map(|(_k, x)| DomainPublished {
+        let mut domains: Vec<DomainPublished> = self.domains_published.iter().filter(|(_k, x)| x.is_active == true).map(|(_k, x)| DomainPublished {
             id: x.id,
             domain: x.domain.to_string(),
             user_seller: x.user_seller.to_string(),
             price: x.price,
+            post_type: x.post_type,
             is_active: x.is_active, 
-            date_fech: x.date_fech,
-            date_year: x.date_year,
-            date_month: x.date_month,
-            date_day: x.date_day
-        }).collect()
+            date_time: x.date_time,
+        }).collect();
+
+        domains.sort_by(|a, b| b.post_type.partial_cmp(&a.post_type).unwrap());
+
+        domains
     }
 }
 
@@ -346,85 +472,5 @@ fn refund_deposit(storage_used: u64, extra_spend: Balance) {
     let refund = attached_deposit - required_cost;
     if refund > 1 {
         Promise::new(env::predecessor_account_id()).transfer(refund);
-    }
-}
-
-// unlike the struct's functions above, this function cannot use attributes #[derive(…)] or #[near_bindgen]
-// any attempts will throw helpful warnings upon 'cargo build'
-// while this function cannot be invoked directly on the blockchain, it can be called from an invoked function
-
-/*
- * the rest of this file sets up unit tests
- * to run these, the command will be:
- * cargo test --package rust-counter-tutorial -- --nocapture
- * Note: 'rust-counter-tutorial' comes from cargo.toml's 'name' key
- */
-
-// use the attribute below for unit tests
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use near_sdk::MockedBlockchain;
-    use near_sdk::{testing_env, VMContext};
-
-    // part of writing unit tests is setting up a mock context
-    // in this example, this is only needed for env::log in the contract
-    // this is also a useful list to peek at when wondering what's available in env::*
-    fn get_context(input: Vec<u8>, is_view: bool) -> VMContext {
-        VMContext {
-            current_account_id: "alice.testnet".to_string(),
-            signer_account_id: "robert.testnet".to_string(),
-            signer_account_pk: vec![0, 1, 2],
-            predecessor_account_id: "jane.testnet".to_string(),
-            input,
-            block_index: 0,
-            block_timestamp: 0,
-            account_balance: 0,
-            account_locked_balance: 0,
-            storage_usage: 0,
-            attached_deposit: 0,
-            prepaid_gas: 10u64.pow(18),
-            random_seed: vec![0, 1, 2],
-            is_view,
-            output_data_receivers: vec![],
-            epoch_height: 19,
-        }
-    }
-
-    // mark individual unit tests with #[test] for them to be registered and fired
-    #[test]
-    fn increment() {
-        // set up the mock context into the testing environment
-        let context = get_context(vec![], false);
-        testing_env!(context);
-        // instantiate a contract variable with the counter at zero
-        let mut contract = Counter { val: 0 };
-        contract.increment();
-        println!("Value after increment: {}", contract.get_num());
-        // confirm that we received 1 when calling get_num
-        assert_eq!(1, contract.get_num());
-    }
-
-    #[test]
-    fn decrement() {
-        let context = get_context(vec![], false);
-        testing_env!(context);
-        let mut contract = Counter { val: 0 };
-        contract.decrement();
-        println!("Value after decrement: {}", contract.get_num());
-        // confirm that we received -1 when calling get_num
-        assert_eq!(-1, contract.get_num());
-    }
-
-    #[test]
-    fn increment_and_reset() {
-        let context = get_context(vec![], false);
-        testing_env!(context);
-        let mut contract = Counter { val: 0 };
-        contract.increment();
-        contract.reset();
-        println!("Value after reset: {}", contract.get_num());
-        // confirm that we received -1 when calling get_num
-        assert_eq!(0, contract.get_num());
     }
 }
