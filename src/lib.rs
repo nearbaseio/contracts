@@ -353,6 +353,34 @@ impl Contract {
         }).collect()
     }
 
+    pub fn get_top_published(&self, top: Option<i32>) -> Vec<DomainPublished> {
+        let top_limit = top.unwrap_or(5);
+
+        let mut top_domains: Vec<DomainPublished> = self.domains_published.iter().filter(|(_k, x)| x.is_active == true).map(|(_k, x)| DomainPublished {
+            id: x.id,
+            domain: x.domain.to_string(),
+            user_seller: x.user_seller.to_string(),
+            price: x.price,
+            post_type: x.post_type,
+            is_active: x.is_active, 
+            date_time: x.date_time,
+        }).collect();
+
+        top_domains.sort_by(|a, b| b.price.partial_cmp(&a.price).unwrap());
+        
+        top_domains.iter()
+        .take(top_limit as usize)
+        .map(|x| DomainPublished {
+            id: x.id,
+            domain: x.domain.to_string(),
+            user_seller: x.user_seller.to_string(),
+            price: x.price,
+            post_type: x.post_type,
+            is_active: x.is_active, 
+            date_time: x.date_time,
+        }).collect()
+    }
+
     pub fn get_top_purchased(&self, top: Option<i32>) -> Vec<DomainPurchased> {
         let top_limit = top.unwrap_or(5);
 
