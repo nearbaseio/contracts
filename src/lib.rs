@@ -9,15 +9,16 @@
 //! [reset]: struct.Counter.html#method.reset
 
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
-use near_sdk::{env, near_bindgen, AccountId, PanicOnDefault, Balance, Promise};
-use near_sdk::collections::{ UnorderedMap};
+use near_sdk::{env, near_bindgen, AccountId, PanicOnDefault, Balance, Promise, serde_json::json,
+    BorshStorageKey };
+use near_sdk::collections::{ UnorderedMap, UnorderedSet };
 //use near_sdk::json_types::{U128};
 use serde::Serialize;
 use serde::Deserialize;
-use near_sdk::json_types::{ValidAccountId, U128};
+use near_sdk::json_types::{U128};
 //use near_sdk::env::is_valid_account_id;
 
-near_sdk::setup_alloc!();
+//near_sdk::setup_alloc!();
 
 pub const VAULT_FEE: u128 = 500;
 
@@ -50,63 +51,79 @@ pub struct DomainPurchased {
 #[near_bindgen]
 #[derive(BorshDeserialize, BorshSerialize, PanicOnDefault)]
 pub struct Contract {
+    owner_id: AccountId,
     id_domain: i128,
     domains_published: UnorderedMap<i128, DomainPublished>,
-    domains_purchased: Vec<DomainPurchased>,
+    domains_purchased: UnorderedMap<i128, DomainPurchased>,
     vault_id: AccountId,
-    administrators: Vec<AccountId>,
+    administrators: UnorderedSet<AccountId>,
+}
+
+#[derive(BorshSerialize, BorshStorageKey)]
+enum StorageKey {
+    PublishedKey,
+    PurchasedKey,
+    AdminKey,
 }
 
 #[near_bindgen]
 impl Contract {
     #[init]
-    pub fn new(vault_id: ValidAccountId) -> Self {
+    pub fn new(owner_id: AccountId, vault_id: AccountId) -> Self {
         assert!(!env::state_exists(), "Already initialized");
         Self {
+            owner_id: owner_id,
             id_domain: 0,
-            domains_published: UnorderedMap::new(b"s".to_vec()),
-            //domains_purchased: UnorderedMap::new(b"s".to_vec()),
-            domains_purchased: Vec::new(),
-            vault_id: vault_id.to_string(),
-            administrators: vec![
-                                    "nearbase.testnet".to_string(),
-                                    "juanochando.testnet".to_string(),
-                                ],
+            domains_published: UnorderedMap::new(StorageKey::PublishedKey),
+            domains_purchased: UnorderedMap::new(StorageKey::PurchasedKey),
+            vault_id: vault_id,
+            administrators: UnorderedSet::new(StorageKey::AdminKey)
         }
     }
 
     pub fn set_admin(&mut self, user_id: AccountId) {      
-        self.administrators.iter().find(|&x| x == &env::signer_account_id()).expect("Only administrators can set categories");
-        let valid = self.administrators.iter().find(|&x| x == &user_id);
-        if valid.is_some() {
-            env::panic(b"the user is already in the list of administrators");
+        assert!(self.owner_id == env::signer_account_id() || self.administrators.contains(&env::signer_account_id()), "Only administrators can set categories");
+        if self.administrators.contains(&user_id) {
+            env::panic_str("the user is already in the list of administrators");
         }
-        self.administrators.push(user_id);
+        self.administrators.insert(&user_id);
     }
 
     pub fn delete_admin(&mut self, user_id: AccountId) {      
-        self.administrators.iter().find(|&x| x == &env::signer_account_id()).expect("Only administrators can set categories");
-        let index = self.administrators.iter().position(|x| x == &user_id.to_string()).expect("the user is not in the list of administrators");
-        self.administrators.remove(index);
+        assert!(self.owner_id == env::signer_account_id() || self.administrators.contains(&env::signer_account_id()), "Only administrators can set categories");
+        self.administrators.remove(&user_id);
     }
 
     pub fn publish_domain(&mut self, domain: AccountId, user_seller: AccountId, price: U128) -> DomainPublished {      
-        self.administrators.iter().find(|&x| x == &env::signer_account_id()).expect("NearBase: Only administrators can publish domains");
+        assert!(self.owner_id == env::signer_account_id() || self.administrators.contains(&env::signer_account_id()), "NearBase: Only administrators can publish domains");
 
         self.id_domain += 1;
 
         let data = DomainPublished {
             id: self.id_domain,
-            domain: domain.to_string(),
-            user_seller: user_seller.to_string(),
+            domain: domain,
+            user_seller: user_seller,
             price: price.0,
             post_type: 1,
             is_active: true,
             date_time: env::block_timestamp(),
         };
 
-        self.domains_published.insert(&self.id_domain, &data);
-        env::log(b"published domain");
+        self.domains_published.insert(&self.id_domain, &data.clone());
+        env::log_str(
+            &json!({
+                "type": "publish_domain",
+                "params": {
+                    "id": data.id.to_string(),
+                    "domain": data.domain.to_string(),
+                    "user_seller": data.user_seller.to_string(),
+                    "price": data.price.to_string(),
+                    "post_type": 1,
+                    "is_active": true,
+                    "date_time": data.date_time.to_string(),
+                }
+            }).to_string()
+        );
         data
     }
 
@@ -118,7 +135,7 @@ impl Contract {
         post_type: i8,
     ) -> DomainPublished {  
         let initial_storage_usage = env::storage_usage();  
-        let domain = self.domains_purchased.iter().find(|&x| x.id == id).expect("NearBase: Domain does not exist");
+        let domain = self.domains_purchased.get(&id).expect("NearBase: Domain does not exist");
 
         if domain.owner_id == env::signer_account_id() && domain.retired == false {
             if post_type == 1 {
@@ -134,9 +151,21 @@ impl Contract {
         
                 self.domains_published.insert(&domain.id, &data);
 
-                let index = self.domains_purchased.iter().position(|x| x.id == id).expect("Not domain");
-                self.domains_purchased.remove(index);
-                env::log(b"NearBase: Published domain");
+                self.domains_purchased.remove(&id);
+                env::log_str(
+                    &json!({
+                        "type": "resell_domain",
+                        "params": {
+                            "id": data.id.to_string(),
+                            "domain": data.domain.to_string(),
+                            "user_seller": data.user_seller.to_string(),
+                            "price": data.price.to_string(),
+                            "post_type": data.post_type.to_string(),
+                            "is_active": data.is_active,
+                            "date_time": data.date_time.to_string(),
+                        }
+                    }).to_string()
+                );
                 data
             } else if post_type == 2 {
                 let deposit_premium: Balance = 1000000000000000000000000;
@@ -163,15 +192,28 @@ impl Contract {
         
                 self.domains_published.insert(&domain.id, &data);
 
-                let index = self.domains_purchased.iter().position(|x| x.id == id).expect("Not domain");
-                self.domains_purchased.remove(index);
-                env::log(b"NearBase: Published domain");
+                self.domains_purchased.remove(&id);
+
+                env::log_str(
+                    &json!({
+                        "type": "resell_domain",
+                        "params": {
+                            "id": data.id.to_string(),
+                            "domain": data.domain.to_string(),
+                            "user_seller": data.user_seller.to_string(),
+                            "price": data.price.to_string(),
+                            "post_type": data.post_type.to_string(),
+                            "is_active": data.is_active,
+                            "date_time": data.date_time.to_string(),
+                        }
+                    }).to_string()
+                );
                 data
             } else {
-                env::panic(b"NearBase: Post type not allowed")
+                env::panic_str("NearBase: Post type not allowed")
             }
         } else {
-            env::panic(b"NearBase: No permission")
+            env::panic_str("NearBase: No permission")
         }
     }
 
@@ -193,7 +235,20 @@ impl Contract {
 
             if domain.post_type == 2 || post_type == 1{
                 self.domains_published.insert(&domain.id, &data);
-                env::log(b"NearBase: Update domain");
+                env::log_str(
+                    &json!({
+                        "type": "update_domain",
+                        "params": {
+                            "id": data.id.to_string(),
+                            "domain": data.domain.to_string(),
+                            "user_seller": data.user_seller.to_string(),
+                            "price": data.price.to_string(),
+                            "post_type": data.post_type.to_string(),
+                            "is_active": data.is_active,
+                            "date_time": data.date_time.to_string(),
+                        }
+                    }).to_string()
+                );
                 data
             } else if domain.post_type == 1 && post_type == 2{
                 let deposit_premium: Balance = 1000000000000000000000000;
@@ -209,14 +264,27 @@ impl Contract {
                 refund_deposit(env::storage_usage() - initial_storage_usage, deposit_premium);
 
                 self.domains_published.insert(&domain.id, &data);
-                env::log(b"NearBase: Update domain");
+                env::log_str(
+                    &json!({
+                        "type": "update_domain",
+                        "params": {
+                            "id": data.id.to_string(),
+                            "domain": data.domain.to_string(),
+                            "user_seller": data.user_seller.to_string(),
+                            "price": data.price.to_string(),
+                            "post_type": data.post_type.to_string(),
+                            "is_active": data.is_active,
+                            "date_time": data.date_time.to_string(),
+                        }
+                    }).to_string()
+                );
                 data
 
             } else {
-                env::panic(b"NearBase: Post type not allowed")
+                env::panic_str("NearBase: Post type not allowed")
             }
         } else {
-            env::panic(b"NearBase: No permission")
+            env::panic_str("NearBase: No permission")
         }
     }
 
@@ -241,7 +309,7 @@ impl Contract {
             let for_vault = price as u128 * VAULT_FEE / 10_000u128;
             let price_deducted = price - for_vault;
 
-            Promise::new(domain.user_seller.to_string()).transfer(price_deducted);
+            Promise::new(domain.user_seller.clone()).transfer(price_deducted);
             Promise::new(self.vault_id.clone()).transfer(for_vault);
             
             refund_deposit(env::storage_usage() - initial_storage_usage, price);
@@ -250,28 +318,55 @@ impl Contract {
                 id: id,
                 domain: domain.domain.clone(),
                 user_seller: domain.user_seller.clone(),
-                owner_id: env::signer_account_id().to_string(),
+                owner_id: env::signer_account_id(),
                 purchase_price: domain.price.clone(),
                 post_type: domain.post_type,
                 retired: false,
                 date_time: env::block_timestamp()
             };
-            self.domains_purchased.push(data);
-            self.domains_published.remove(&id);        
+            self.domains_purchased.insert(&id, &data.clone());
+            self.domains_published.remove(&id);
+            env::log_str(
+                &json!({
+                    "type": "domain_buy",
+                    "params": {
+                        "id": data.id.to_string(),
+                        "domain": data.domain.to_string(),
+                        "user_seller": data.user_seller.to_string(),
+                        "owner_id": data.owner_id.to_string(),
+                        "purchase_price": data.purchase_price.to_string(),
+                        "post_type": data.post_type.to_string(),
+                        "retired": data.retired,
+                        "date_time": data.date_time.to_string(),
+                    }
+                }).to_string()
+            );
         } else {
-            env::panic(b"NearBase: Domain is not active");
+            env::panic_str("NearBase: Domain is not active");
         }
     }
 
-    pub fn retired_domain(&mut self, id: i128) -> DomainPurchased {      
+    pub fn retired_domain(&mut self, id: i128) -> DomainPurchased {
         //self.administrators.iter().find(|&x| x == &env::signer_account_id()).expect("NearBase: Only administrators can publish domains");
-        let index = self.domains_purchased.iter().position(|x| x.id == id).expect("Domain no exists");
+        let mut domine = self.domains_purchased.get(&id).expect("Domain no exists");
         
-        if self.domains_purchased[index].owner_id == env::signer_account_id() {
-            self.domains_purchased[index].retired = true;
-            self.domains_purchased[index].clone()
+        if domine.owner_id == env::signer_account_id() {
+            domine.retired = true;
+            self.domains_purchased.insert(&id, &domine);
+            env::log_str(
+                &json!({
+                    "type": "retired_domain",
+                    "params": {
+                        "id": id.to_string(),
+                        "owner_id": env::signer_account_id().to_string(),
+                        "retired": true,
+                        "date_time": env::block_timestamp().to_string(),
+                    }
+                }).to_string()
+            );
+            domine.clone()
         } else {
-            env::panic(b"NearBase: No permission")
+            env::panic_str("NearBase: No permission")
         }
     }
 
@@ -280,14 +375,23 @@ impl Contract {
         let domain = self.domains_published.get(&id).expect("NearBase: Domain does not exist");
         
         if domain.user_seller == env::signer_account_id() {
-            self.domains_published.remove(&domain.id);  
-            env::log(b"removed domain"); 
+            self.domains_published.remove(&id);  
+            env::log_str(
+                &json!({
+                    "type": "cancel_domain",
+                    "params": {
+                        "id": id.to_string(),
+                        "user_seller": env::signer_account_id().to_string(),
+                        "date_time": env::block_timestamp().to_string(),
+                    }
+                }).to_string()
+            ); 
         } else {
-            env::panic(b"NearBase: No permission")
+            env::panic_str("NearBase: No permission")
         }
     }
 
-    pub fn get_domains_published(
+    /*pub fn get_domains_published(
         self,
         user_seller: Option<AccountId>,
     ) -> Vec<DomainPublished> {
@@ -484,7 +588,7 @@ impl Contract {
         domains.sort_by(|a, b| b.post_type.partial_cmp(&a.post_type).unwrap());
 
         domains
-    }
+    }*/
 }
 
 fn refund_deposit(storage_used: u64, extra_spend: Balance) {
