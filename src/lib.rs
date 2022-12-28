@@ -391,22 +391,22 @@ impl Contract {
         }
     }
 
-    /*pub fn get_domains_published(
+    pub fn get_domains_published(
         self,
         user_seller: Option<AccountId>,
     ) -> Vec<DomainPublished> {
         if user_seller.is_some() {
-            self.domains_published.iter().filter(|(_k, x)| x.user_seller == user_seller.clone().unwrap().to_string()).map(|(_k, x)| DomainPublished {
+            self.domains_published.iter().filter(|(_k, x)| x.user_seller == user_seller.clone().unwrap()).map(|(_k, x)| DomainPublished {
                 id: x.id,
-                domain: x.domain.to_string(),
-                user_seller: x.user_seller.to_string(),
+                domain: x.domain.clone(),
+                user_seller: x.user_seller.clone(),
                 price: x.price,
                 is_active: x.is_active, 
                 post_type: x.post_type,
                 date_time: x.date_time,
             }).collect()
         } else {
-            env::panic(b"NearBase: Not user");
+            env::panic_str("NearBase: Not user");
         }
     }
 
@@ -415,95 +415,49 @@ impl Contract {
         owner_id: Option<AccountId>,
         user_seller: Option<AccountId>,
     ) -> Vec<DomainPurchased> {
-        let mut result: Vec<DomainPurchased> = self.domains_purchased;
-
+        let mut result: Vec<DomainPurchased> = [].to_vec();
+        let data = self.domains_purchased;
         if owner_id.is_some() {
-            result = result.iter().filter(|x| x.owner_id == owner_id.as_ref().unwrap().to_string())
-                        .map(|r| DomainPurchased { 
-                            id: r.id,
-                            domain: r.domain.clone(),
-                            user_seller: r.user_seller.clone(),
-                            owner_id: r.owner_id.clone(),
-                            purchase_price: r.purchase_price,
-                            post_type: r.post_type,
-                            retired: r.retired,
-                            date_time: r.date_time,
-                        }).collect();
+            if result.len() > 0 { 
+                result = result.iter().filter(|x| x.owner_id == owner_id.clone().unwrap()).map(|r| r.clone()).collect();
+            } else {
+                result = data.iter().filter(|(_k, x)| x.owner_id == owner_id.clone().unwrap()).map(|(_k, r)| r.clone()).collect();
+            }
         }
 
         if user_seller.is_some() {
-            result = result.iter().filter(|x| x.user_seller == user_seller.as_ref().unwrap().to_string())
-                        .map(|r| DomainPurchased { 
-                            id: r.id,
-                            domain: r.domain.clone(),
-                            user_seller: r.user_seller.clone(),
-                            owner_id: r.owner_id.clone(),
-                            purchase_price: r.purchase_price,
-                            post_type: r.post_type,
-                            retired: r.retired,
-                            date_time: r.date_time,
-                        }).collect();
+            if result.len() > 0 {
+                result = result.iter().filter(|x| x.user_seller == user_seller.clone().unwrap()).map(|r| r.clone()).collect();
+            } else {
+                result = data.iter().filter(|(_k, x)| x.user_seller == user_seller.clone().unwrap()).map(|(_k, r)| r.clone()).collect();
+            }
         }
 
-        result.iter().map(|r| DomainPurchased { 
-            id: r.id,
-            domain: r.domain.clone(),
-            user_seller: r.user_seller.clone(),
-            owner_id: r.owner_id.clone(),
-            purchase_price: r.purchase_price,
-            post_type: r.post_type,
-            retired: r.retired,
-            date_time: r.date_time,
-        }).collect()
+        result.iter().map(|r| r.clone()).collect()
     }
 
     pub fn get_top_published(&self, top: Option<i32>) -> Vec<DomainPublished> {
         let top_limit = top.unwrap_or(5);
 
-        let mut top_domains: Vec<DomainPublished> = self.domains_published.iter().filter(|(_k, x)| x.is_active == true).map(|(_k, x)| DomainPublished {
-            id: x.id,
-            domain: x.domain.to_string(),
-            user_seller: x.user_seller.to_string(),
-            price: x.price,
-            post_type: x.post_type,
-            is_active: x.is_active, 
-            date_time: x.date_time,
-        }).collect();
+        let mut top_domains: Vec<DomainPublished> = self.domains_published.iter().filter(|(_k, x)| x.is_active == true).map(|(_k, x)| x.clone()).collect();
 
         top_domains.sort_by(|a, b| b.price.partial_cmp(&a.price).unwrap());
         
         top_domains.iter()
         .take(top_limit as usize)
-        .map(|x| DomainPublished {
-            id: x.id,
-            domain: x.domain.to_string(),
-            user_seller: x.user_seller.to_string(),
-            price: x.price,
-            post_type: x.post_type,
-            is_active: x.is_active, 
-            date_time: x.date_time,
-        }).collect()
+        .map(|x| x.clone()).collect()
     }
 
     pub fn get_top_purchased(&self, top: Option<i32>) -> Vec<DomainPurchased> {
         let top_limit = top.unwrap_or(5);
 
-        let mut top_domains: Vec<DomainPurchased> = self.domains_purchased.clone();
+        let mut top_domains: Vec<DomainPurchased> = self.domains_purchased.iter().map(|(_k, x)| x.clone()).collect();
 
         top_domains.sort_by(|a, b| b.purchase_price.partial_cmp(&a.purchase_price).unwrap());
         
         top_domains.iter()
         .take(top_limit as usize)
-        .map(|x| DomainPurchased {
-            id: x.id,
-            domain: x.domain.to_string(),
-            user_seller: x.user_seller.to_string(),
-            owner_id: x.owner_id.to_string(),
-            purchase_price: x.purchase_price,
-            post_type: x.post_type,
-            retired: x.retired,
-            date_time: x.date_time,
-        }).collect()
+        .map(|x| x.clone()).collect()
     }
 
     pub fn get_last_sold(&self,
@@ -512,31 +466,13 @@ impl Contract {
 
         if self.domains_purchased.len() as i128 > number_domains {
             let index: i128 = self.domains_purchased.len() as i128 - number_domains;
-            let result: Vec<DomainPurchased> = self.domains_purchased.clone();
+            let result: Vec<DomainPurchased> = self.domains_purchased.iter().map(|(_k, x)| x.clone()).collect();
 
             result.iter()
             .skip(index as usize)
-            .map(|x| DomainPurchased {
-                id: x.id,
-                domain: x.domain.clone(),
-                user_seller: x.user_seller.clone(),
-                owner_id: x.owner_id.clone(),
-                purchase_price: x.purchase_price,
-                post_type: x.post_type,
-                retired: x.retired,
-                date_time: x.date_time,
-            }).collect()
+            .map(|x| x.clone()).collect()
         } else {
-            self.domains_purchased.iter().map(|x| DomainPurchased {
-                id: x.id,
-                domain: x.domain.clone(),
-                user_seller: x.user_seller.clone(),
-                owner_id: x.owner_id.clone(),
-                purchase_price: x.purchase_price,
-                post_type: x.post_type,
-                retired: x.retired,
-                date_time: x.date_time,
-            }).collect()
+            self.domains_purchased.iter().map(|(_k, x)| x.clone()).collect()
         }  
     }
 
@@ -544,51 +480,25 @@ impl Contract {
         self,
         id: i128,
     ) -> Vec<DomainPurchased> {
-        self.domains_purchased.iter().filter(|x| x.id == id)
-        .map(|x| DomainPurchased {
-            id: x.id,
-            domain: x.domain.to_string(),
-            user_seller: x.user_seller.to_string(),
-            owner_id: x.owner_id.to_string(),
-            purchase_price: x.purchase_price,
-            post_type: x.post_type,
-            retired: x.retired,
-            date_time: x.date_time,
-        }).collect()
+        self.domains_purchased.iter().filter(|(_k, x)| x.id == id)
+        .map(|(_k, x)| x.clone()).collect()
     }
 
     pub fn get_domain_forsale(
         self,
         id: i128,
     ) -> Vec<DomainPublished> {
-        self.domains_published.iter().filter(|(_k, x)| x.id == id).map(|(_k, x)| DomainPublished {
-            id: x.id,
-            domain: x.domain.to_string(),
-            user_seller: x.user_seller.to_string(),
-            price: x.price,
-            post_type: x.post_type,
-            is_active: x.is_active, 
-            date_time: x.date_time,
-        }).collect()
+        self.domains_published.iter().filter(|(_k, x)| x.id == id).map(|(_k, x)| x.clone()).collect()
     }
 
     pub fn get_market(&self,
     ) -> Vec<DomainPublished> {
-
-        let mut domains: Vec<DomainPublished> = self.domains_published.iter().filter(|(_k, x)| x.is_active == true).map(|(_k, x)| DomainPublished {
-            id: x.id,
-            domain: x.domain.to_string(),
-            user_seller: x.user_seller.to_string(),
-            price: x.price,
-            post_type: x.post_type,
-            is_active: x.is_active, 
-            date_time: x.date_time,
-        }).collect();
+        let mut domains: Vec<DomainPublished> = self.domains_published.iter().filter(|(_k, x)| x.is_active == true).map(|(_k, x)| x.clone()).collect();
 
         domains.sort_by(|a, b| b.post_type.partial_cmp(&a.post_type).unwrap());
 
         domains
-    }*/
+    }
 }
 
 fn refund_deposit(storage_used: u64, extra_spend: Balance) {
